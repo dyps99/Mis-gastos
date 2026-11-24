@@ -41,9 +41,10 @@ input:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px var(--acc2)}
 .chip{border:1.5px solid var(--line);background:var(--bg);color:var(--ink);padding:9px 13px;border-radius:999px;font:inherit;font-size:14px;cursor:pointer;transition:transform .15s,background .2s,color .2s,border-color .2s}
 .chip:active{transform:scale(.94)}
 .chip[aria-pressed=true]{color:#fff;border-color:transparent;transform:scale(1.04);box-shadow:0 4px 12px rgba(0,0,0,.18)}
-.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:var(--bg);padding:5px;border-radius:14px;border:1.5px solid var(--line)}
+.seg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;background:var(--bg);padding:5px;border-radius:14px;border:1.5px solid var(--line)}
 .seg button{border:0;background:transparent;color:var(--ink);padding:11px;border-radius:10px;font:inherit;font-weight:600;cursor:pointer;transition:all .2s}
 .seg button[aria-pressed=true]{background:var(--acc);color:#fff;box-shadow:0 4px 12px rgba(15,155,120,.35)}
+.seg button{font-size:13px;padding:11px 2px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .btn{width:100%;margin-top:16px;padding:14px;border:0;border-radius:14px;background:linear-gradient(135deg,#0b7a63,#10a37f);color:#fff;font:inherit;font-weight:700;font-size:16px;cursor:pointer;box-shadow:0 8px 18px rgba(16,163,127,.35);transition:transform .15s}
 .btn:active{transform:scale(.97)}
@@ -118,6 +119,7 @@ input:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px var(--acc2)}
     <div class="seg" id="pagos">
       <button type="button" data-p="Efectivo" aria-pressed="true">💵 Efectivo</button>
       <button type="button" data-p="Tarjeta" aria-pressed="false">💳 Tarjeta</button>
+      <button type="button" data-p="Transferencia" aria-pressed="false">🏦 Transfer.</button>
     </div>
     <label>Tipo de compra</label>
     <div class="chips" id="cats"></div>
@@ -142,7 +144,7 @@ input:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px var(--acc2)}
   </div>
 
   <div class="card">
-    <h2>💳 Tarjeta vs efectivo</h2>
+    <h2>💳 Método de pago</h2>
     <div id="pagoSplit"></div>
   </div>
 
@@ -169,7 +171,7 @@ const CATS=[
  {n:"Comida",e:"🍽️",c:"#f97316"},{n:"Transporte",e:"🚌",c:"#3b82f6"},{n:"Estudio",e:"📚",c:"#8b5cf6"},
  {n:"Salud",e:"💊",c:"#ef4444"},{n:"Ocio",e:"🎮",c:"#eab308"},{n:"Servicios",e:"💡",c:"#14b8a6"},
  {n:"Ropa",e:"👕",c:"#ec4899"},{n:"Otros",e:"🧾",c:"#94a3b8"}];
-const PAGO={Efectivo:{e:"💵",c:"#16a34a"},Tarjeta:{e:"💳",c:"#2563eb"}};
+const PAGO={Efectivo:{e:"💵",c:"#16a34a"},Tarjeta:{e:"💳",c:"#2563eb"},Transferencia:{e:"🏦",c:"#9333ea"}};
 const KEY="gastos_v1";
 let gastos=[],cat=CATS[0].n,pago="Efectivo",periodo="mes",editId=null;
 try{gastos=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){gastos=[]}
@@ -253,12 +255,11 @@ function resumen(){
   anima($("resumen"));pagos(lst,total);
 }
 function pagos(lst,total){
-  const ef=lst.filter(g=>g.pago==="Efectivo").reduce((s,g)=>s+g.monto,0),ta=total-ef;
   if(!total){$("pagoSplit").innerHTML='<div class="empty">💳 Sin datos todavía.</div>';return}
-  const pe=ef*100/total,pt=ta*100/total;
-  $("pagoSplit").innerHTML=`<div class="split"><i style="background:${PAGO.Efectivo.c}" data-w="${pe}%">${pe>=12?Math.round(pe)+"%":""}</i><i style="background:${PAGO.Tarjeta.c}" data-w="${pt}%">${pt>=12?Math.round(pt)+"%":""}</i></div>
-   <div class="splitlg"><div><span class="dot" style="background:${PAGO.Efectivo.c};display:inline-block"></span> 💵 Efectivo<b>${fmt(ef)}</b></div><div style="text-align:right">💳 Tarjeta <span class="dot" style="background:${PAGO.Tarjeta.c};display:inline-block"></span><b>${fmt(ta)}</b></div></div>
-   <div class="note">Del periodo que elegiste arriba (hoy, semana o mes).</div>`;
+  const it=Object.keys(PAGO).map(n=>({n,v:lst.filter(g=>g.pago===n).reduce((s,g)=>s+g.monto,0)}));
+  $("pagoSplit").innerHTML=`<div class="split">`+it.map(i=>{const p=i.v*100/total;return `<i style="background:${PAGO[i.n].c}" data-w="${p}%">${p>=12?Math.round(p)+"%":""}</i>`}).join("")+`</div><div class="splitlg">`+
+   it.map(i=>`<div><span class="dot" style="background:${PAGO[i.n].c};display:inline-block"></span> ${PAGO[i.n].e} ${i.n}<b>${fmt(i.v)}</b></div>`).join("")+
+   `</div><div class="note">Del periodo que elegiste arriba (hoy, semana o mes).</div>`;
   anima($("pagoSplit"));
 }
 function semanaDias(){
@@ -346,7 +347,7 @@ function chBars(title,labels,vals,hi){
   return c;
 }
 const byCat=lst=>{const m={};lst.forEach(g=>m[g.cat]=(m[g.cat]||0)+g.monto);return Object.entries(m).map(([n,v])=>({n,v,c:info(n).c})).sort((a,b)=>b.v-a.v)};
-const byPago=lst=>["Efectivo","Tarjeta"].map(n=>({n,v:lst.filter(g=>g.pago===n).reduce((s,g)=>s+g.monto,0),c:PAGO[n].c})).filter(i=>i.v>0);
+const byPago=lst=>["Efectivo","Tarjeta","Transferencia"].map(n=>({n,v:lst.filter(g=>g.pago===n).reduce((s,g)=>s+g.monto,0),c:PAGO[n].c})).filter(i=>i.v>0);
 
 /* ---------- Excel ---------- */
 const utc=s=>{const[a,b,c]=s.split("-").map(Number);return new Date(Date.UTC(a,b-1,c))};
@@ -396,7 +397,7 @@ async function crearExcel(){
   };
   function suma0(n,key,soloMes){return ord.filter(g=>g[key]===n&&(!soloMes||(g.fecha>=ms&&g.fecha<=me))).reduce((s,g)=>s+g.monto,0)}
   let nr=tabla(7,"Por tipo de compra",CATS.map(c=>c.n),C,"cat");
-  tabla(nr+1,"Por método de pago",["Efectivo","Tarjeta"],D,"pago");
+  tabla(nr+1,"Por método de pago",["Efectivo","Tarjeta","Transferencia"],D,"pago");
 
   /* Hoja Gráficas */
   const gs=wb.addWorksheet("Gráficas",{views:[{showGridLines:false}]});
@@ -410,7 +411,7 @@ async function crearExcel(){
     meses.push({l:cap(d.toLocaleDateString("es-CO",{month:"short"}).replace(".","")),v:suma(a,b),hi:k===0})}}
   const imgs=[
     chDonut("Gasto del mes por tipo de compra",byCat(lMes)),
-    chDonut("Gasto del mes: tarjeta vs efectivo",byPago(lMes)),
+    chDonut("Gasto del mes por método de pago",byPago(lMes)),
     chBars("Esta semana, día por día",sem.map(d=>d.n),sem.map(d=>d.v),sem.findIndex(d=>d.hoy)),
     chBars("Gasto de los últimos 6 meses",meses.map(m=>m.l),meses.map(m=>m.v),5)];
   const pos=[[0.3,3],[10.6,3],[0.3,23],[10.6,23]];
@@ -425,7 +426,7 @@ async function crearExcel(){
     const r=ws.addRow([utc(g.fecha),cap(parse(g.fecha).toLocaleDateString("es-CO",{weekday:"long"})),g.cat,g.pago,g.monto,g.nota||""]);
     r.getCell(1).numFmt="dd/mm/yyyy";r.getCell(5).numFmt=MONEY;r.getCell(1).alignment={horizontal:"center"};
     for(let c=1;c<=6;c++){const k=r.getCell(c);box(k);if(i%2)k.fill={type:"pattern",pattern:"solid",fgColor:{argb:"FFF5F9F7"}}}
-    r.getCell(4).font={bold:true,color:{argb:g.pago==="Tarjeta"?"FF2563EB":"FF16A34A"}};
+    r.getCell(4).font={bold:true,color:{argb:g.pago==="Tarjeta"?"FF2563EB":g.pago==="Transferencia"?"FF9333EA":"FF16A34A"}};
   });
   ws.autoFilter={from:"A1",to:"F"+Math.max(N+1,2)};
 

@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mis gastos</title>
 <link rel="manifest" href="manifest.webmanifest">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="theme-color" content="#0b7a63">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -105,6 +104,7 @@ input:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px var(--acc2)}
 </style>
 </head>
 <body>
+<div id="err" hidden onclick="location.reload()" style="position:fixed;top:0;left:0;right:0;z-index:50;background:#b3402f;color:#fff;padding:10px 14px;font-size:13px;text-align:center;cursor:pointer"></div>
 <div class="auth" id="auth" hidden>
   <div class="box">
     <h1>💸 Mis gastos</h1>
@@ -208,22 +208,48 @@ gastos.forEach(g=>{if(!g.pago)g.pago="Efectivo"});
 const save=()=>{try{localStorage.setItem("gastos_cache_v2",JSON.stringify(gastos))}catch(e){}};
 /* ---------- nube (Supabase): tus gastos se guardan en tu cuenta ---------- */
 const SB_URL="https://vadbdmdyymamlljeikla.supabase.co";
-const SB_KEY="sb_publishable_Q78qqLQFQiqUCT67KK620w_Yt7HBlRN";
-let sb=null,usuario=null,vaciando=false,pend=[];
+const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZhZGJkbWR5eW1hbWxsamVpa2xhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU1NDMyNDQsImV4cCI6MjExMTExOTI0NH0.jQZXmex0AN4nNfs1m_gADcCewj2XS0d7FqSuNdQclIY";
+let usuario=null,sesion=null,vaciando=false,pend=[];
 try{pend=JSON.parse(localStorage.getItem("gastos_pend_v2")||"[]")}catch(e){pend=[]}
 const savePend=()=>{try{localStorage.setItem("gastos_pend_v2",JSON.stringify(pend))}catch(e){}};
 function marca(t){const x=document.getElementById("pSync");if(x)x.textContent=t}
+async function api(path,opt){
+  const r=await fetch(SB_URL+path,opt);
+  const t=await r.text();let j=null;try{j=t?JSON.parse(t):null}catch(e){}
+  if(!r.ok){const e=new Error((j&&(j.msg||j.error_description||j.message||j.error))||("Error "+r.status));e.status=r.status;throw e}
+  return j;
+}
+const guardaSesion=x=>{sesion=x;try{x?localStorage.setItem("gastos_sess",JSON.stringify(x)):localStorage.removeItem("gastos_sess")}catch(e){}};
+const aSesion=j=>({access_token:j.access_token,refresh_token:j.refresh_token,expires_at:j.expires_at||Math.floor(Date.now()/1000)+(j.expires_in||3600),user:j.user});
+function cerrarLocal(){
+  guardaSesion(null);usuario=null;
+  try{localStorage.removeItem("gastos_cache_v2");localStorage.removeItem("gastos_pend_v2")}catch(e){}
+  pend=[];gastos=[];todo();$("auth").hidden=false;
+}
+async function token(){
+  if(!sesion)throw new Error("Sin sesión");
+  if(sesion.expires_at-60>Date.now()/1000)return sesion.access_token;
+  try{
+    const j=await api("/auth/v1/token?grant_type=refresh_token",{method:"POST",headers:{apikey:SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({refresh_token:sesion.refresh_token})});
+    guardaSesion(aSesion(j));usuario=sesion.user;return sesion.access_token;
+  }catch(e){if(e.status===400||e.status===401||e.status===403)cerrarLocal();throw e}
+}
+async function cab(){return{apikey:SB_KEY,Authorization:"Bearer "+await token(),"Content-Type":"application/json"}}
 function persistir(g){pend=pend.filter(p=>p.id!==g.id);pend.push({op:"set",id:g.id,g});savePend();vaciar()}
 function quitar(id){pend=pend.filter(p=>p.id!==id);pend.push({op:"del",id});savePend();vaciar()}
 async function vaciar(){
-  if(!sb||!usuario||vaciando||!pend.length)return;
+  if(!usuario||vaciando||!pend.length)return;
   vaciando=true;
   try{
     while(pend.length){
-      const p=pend[0];let r;
-      if(p.op==="set")r=await sb.from("gastos").upsert({user_id:usuario.id,id:p.g.id,fecha:p.g.fecha,cat:p.g.cat,pago:p.g.pago,monto:p.g.monto,nota:p.g.nota||""},{onConflict:"user_id,id"});
-      else r=await sb.from("gastos").delete().eq("id",p.id);
-      if(r.error)throw r.error;
+      const p=pend[0],h=await cab();
+      try{
+        if(p.op==="set")await api("/rest/v1/gastos?on_conflict=user_id,id",{method:"POST",headers:{...h,Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify([{user_id:usuario.id,id:p.g.id,fecha:p.g.fecha,cat:p.g.cat,pago:p.g.pago,monto:p.g.monto,nota:p.g.nota||""}])});
+        else await api("/rest/v1/gastos?id=eq."+encodeURIComponent(p.id),{method:"DELETE",headers:h});
+      }catch(e){
+        const dato=e.status&&e.status>=400&&e.status<500&&![401,403,408,429].includes(e.status);
+        if(!dato)throw e;
+      }
       pend.shift();savePend();
     }
     marca("☁️ Guardado en tu cuenta");
@@ -232,12 +258,15 @@ async function vaciar(){
 }
 async function cargar(){
   let remotos=[],desde=0;
-  while(true){
-    const r=await sb.from("gastos").select("id,fecha,cat,pago,monto,nota").order("fecha",{ascending:false}).range(desde,desde+999);
-    if(r.error){marca("⏳ Sin conexión: mostrando lo último guardado");return}
-    remotos=remotos.concat(r.data.map(x=>({id:Number(x.id),fecha:x.fecha,cat:x.cat,pago:x.pago,monto:Number(x.monto),nota:x.nota||""})));
-    if(r.data.length<1000)break;desde+=1000;
-  }
+  try{
+    while(true){
+      const h=await cab();
+      const d=await api("/rest/v1/gastos?select=id,fecha,cat,pago,monto,nota&order=fecha.desc",{headers:{...h,"Range-Unit":"items",Range:desde+"-"+(desde+999)}});
+      const lista=Array.isArray(d)?d:[];
+      remotos=remotos.concat(lista.map(x=>({id:Number(x.id),fecha:x.fecha,cat:x.cat,pago:x.pago,monto:Number(x.monto),nota:x.nota||""})));
+      if(lista.length<1000)break;desde+=1000;
+    }
+  }catch(e){marca("⏳ Sin conexión: mostrando lo último guardado");return}
   if(!remotos.length&&!pend.length&&!localStorage.getItem("gastos_migrado")){
     let viejos=[];try{viejos=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){}
     viejos=viejos.filter(g=>g&&typeof g.monto==="number"&&g.fecha).map(g=>({id:g.id||Date.now(),fecha:g.fecha,cat:g.cat||"Otros",pago:g.pago||"Efectivo",monto:g.monto,nota:g.nota||""}));
@@ -256,30 +285,22 @@ const trad=m=>{m=String(m||"");
   if(/not confirmed/i.test(m))return"Falta confirmar tu correo. Abre el mensaje que te enviamos.";
   if(/already registered/i.test(m))return"Ese correo ya tiene cuenta. Toca Entrar.";
   if(/at least 6|Password should/i.test(m))return"La contraseña debe tener mínimo 6 caracteres.";
-  if(/valid email|invalid format/i.test(m))return"Escribe un correo válido.";
+  if(/valid email|invalid format|Unable to validate email/i.test(m))return"Escribe un correo válido.";
   if(/rate limit|too many/i.test(m))return"Demasiados intentos. Espera unos minutos.";
-  if(/fetch|network/i.test(m))return"Sin internet. Intenta de nuevo.";
+  if(/fetch|network|Failed/i.test(m))return"Sin internet o conexión bloqueada. Intenta de nuevo.";
   return m||"Algo salió mal. Intenta de nuevo."};
-async function iniciarNube(){
-  if(!window.supabase){marca("📱 Solo en este dispositivo");return}
-  sb=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
-  sb.auth.onAuthStateChange((ev,ses)=>{
-    if(ses&&ses.user){if(!usuario||usuario.id!==ses.user.id){usuario=ses.user;entrar()}else usuario=ses.user}
-    else if(ev==="SIGNED_OUT"){usuario=null;$("auth").hidden=false}
-  });
-  try{const{data}=await sb.auth.getSession();
-    if(data.session){usuario=data.session.user;entrar()}else $("auth").hidden=false}
-  catch(e){$("auth").hidden=false}
+function iniciarNube(){
+  try{sesion=JSON.parse(localStorage.getItem("gastos_sess")||"null")}catch(e){sesion=null}
+  if(sesion&&sesion.user){usuario=sesion.user;entrar()}else $("auth").hidden=false;
 }
 async function acceso(nuevo){
   const mail=$("aMail").value.trim(),pass=$("aPass").value;
   if(!mail||!pass){$("aMsg").textContent="Escribe tu correo y tu contraseña.";return}
   $("aMsg").textContent="Un momento…";$("btnEntrar").disabled=$("btnCrear").disabled=true;
   try{
-    const r=nuevo?await sb.auth.signUp({email:mail,password:pass}):await sb.auth.signInWithPassword({email:mail,password:pass});
-    if(r.error)$("aMsg").textContent=trad(r.error.message);
-    else if(nuevo&&!r.data.session)$("aMsg").textContent="Te enviamos un correo. Ábrelo para confirmar y luego toca Entrar.";
-    else $("aMsg").textContent="";
+    const j=await api(nuevo?"/auth/v1/signup":"/auth/v1/token?grant_type=password",{method:"POST",headers:{apikey:SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({email:mail,password:pass})});
+    if(j&&j.access_token){guardaSesion(aSesion(j));usuario=sesion.user;$("aMsg").textContent="";entrar()}
+    else $("aMsg").textContent="Te enviamos un correo. Ábrelo para confirmar y luego toca Entrar.";
   }catch(e){$("aMsg").textContent=trad(e.message)}
   $("btnEntrar").disabled=$("btnCrear").disabled=false;
 }
@@ -287,11 +308,11 @@ $("btnEntrar").addEventListener("click",()=>acceso(false));
 $("btnCrear").addEventListener("click",()=>acceso(true));
 $("salir").addEventListener("click",async()=>{
   if(pend.length&&!confirm("Hay gastos sin subir a la nube. Si sales ahora se pueden perder. ¿Salir de todos modos?"))return;
-  try{await sb.auth.signOut()}catch(e){}
-  try{localStorage.removeItem("gastos_cache_v2");localStorage.removeItem("gastos_pend_v2")}catch(e){}
-  pend=[];gastos=[];usuario=null;todo();$("auth").hidden=false;
+  try{if(sesion)await api("/auth/v1/logout",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+sesion.access_token}})}catch(e){}
+  cerrarLocal();
 });
 addEventListener("online",vaciar);
+addEventListener("error",e=>{const x=document.getElementById("err");if(x){x.textContent="⚠️ Error en la app: "+(e.message||"desconocido")+" · toca para recargar";x.hidden=false}});
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt=n=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n);

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mis gastos</title>
 <link rel="manifest" href="manifest.webmanifest">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="theme-color" content="#0b7a63">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -91,6 +92,12 @@ input:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px var(--acc2)}
 .day{font-size:12px;color:var(--mut);margin:14px 0 4px;text-transform:capitalize;font-weight:700}
 .msg{color:var(--bad);font-size:13px;min-height:16px;margin-top:6px}
 .note{font-size:12.5px;color:var(--mut);margin-top:8px;text-align:center}
+[hidden]{display:none!important}
+.auth{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:18px;background:linear-gradient(135deg,#0b7a63,#10a37f 55%,#35c9a0)}
+.auth .box{width:100%;max-width:380px;background:var(--card);border-radius:22px;padding:24px 20px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.auth h1{margin:0 0 4px;font-size:24px}
+.auth p{margin:0 0 6px;color:var(--mut);font-size:14px}
+.auth .btn{margin-top:12px}
 .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,120px);background:#14231e;color:#fff;padding:12px 18px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35);transition:transform .35s cubic-bezier(.2,.9,.3,1.3);z-index:9;font-size:14px;max-width:90vw}
 .toast.show{transform:translate(-50%,0)}
 @keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -98,12 +105,25 @@ input:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px var(--acc2)}
 </style>
 </head>
 <body>
+<div class="auth" id="auth" hidden>
+  <div class="box">
+    <h1>💸 Mis gastos</h1>
+    <p>Entra con tu correo para ver tus gastos en cualquier celular.</p>
+    <label for="aMail">Correo</label>
+    <input id="aMail" type="email" autocomplete="email" inputmode="email" placeholder="tucorreo@gmail.com">
+    <label for="aPass">Contraseña (mínimo 6 caracteres)</label>
+    <input id="aPass" type="password" autocomplete="current-password" placeholder="••••••">
+    <div class="msg" id="aMsg"></div>
+    <button class="btn" id="btnEntrar">Entrar</button>
+    <button class="btn sec" id="btnCrear">Crear cuenta nueva</button>
+  </div>
+</div>
 <div class="wrap">
 
   <div class="hero">
     <small id="mesNombre">Este mes</small>
     <div class="big" id="tMes">$0</div>
-    <div class="sub"><span class="pill" id="pProm">📅 Promedio diario: $0</span><span class="pill" id="pN">🧾 0 gastos</span></div>
+    <div class="sub"><span class="pill" id="pProm">📅 Promedio diario: $0</span><span class="pill" id="pN">🧾 0 gastos</span><span class="pill" id="pSync">📱 Solo en este dispositivo</span></div>
   </div>
 
   <div class="mini">
@@ -157,6 +177,15 @@ input:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px var(--acc2)}
     <h2>📗 Reporte en Excel</h2>
     <button class="btn xl" id="excel">Descargar Excel con gráficas</button>
     <div class="note" id="excelNote">Incluye resumen, gráficas, todos tus gastos y el comparativo por mes.</div>
+    <button class="btn sec" id="importar">📥 Importar gastos desde un Excel</button>
+    <input type="file" id="archivo" accept=".xlsx" hidden>
+    <div class="note">Sirve para pasar gastos de otra versión: elige un Excel que descargaste de esta app.</div>
+  </div>
+
+  <div class="card">
+    <h2>👤 Tu cuenta</h2>
+    <div class="note" id="cuenta" style="margin:0 0 4px;text-align:left"></div>
+    <button class="btn sec" id="salir">Cerrar sesión</button>
   </div>
 
   <div class="card">
@@ -174,9 +203,95 @@ const CATS=[
 const PAGO={Efectivo:{e:"💵",c:"#16a34a"},Tarjeta:{e:"💳",c:"#2563eb"},Transferencia:{e:"🏦",c:"#9333ea"}};
 const KEY="gastos_v1";
 let gastos=[],cat=CATS[0].n,pago="Efectivo",periodo="mes",editId=null;
-try{gastos=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){gastos=[]}
+try{gastos=JSON.parse(localStorage.getItem("gastos_cache_v2")||"[]")}catch(e){gastos=[]}
 gastos.forEach(g=>{if(!g.pago)g.pago="Efectivo"});
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(gastos))}catch(e){}};
+const save=()=>{try{localStorage.setItem("gastos_cache_v2",JSON.stringify(gastos))}catch(e){}};
+/* ---------- nube (Supabase): tus gastos se guardan en tu cuenta ---------- */
+const SB_URL="https://vadbdmdyymamlljeikla.supabase.co";
+const SB_KEY="sb_publishable_Q78qqLQFQiqUCT67KK620w_Yt7HBlRN";
+let sb=null,usuario=null,vaciando=false,pend=[];
+try{pend=JSON.parse(localStorage.getItem("gastos_pend_v2")||"[]")}catch(e){pend=[]}
+const savePend=()=>{try{localStorage.setItem("gastos_pend_v2",JSON.stringify(pend))}catch(e){}};
+function marca(t){const x=document.getElementById("pSync");if(x)x.textContent=t}
+function persistir(g){pend=pend.filter(p=>p.id!==g.id);pend.push({op:"set",id:g.id,g});savePend();vaciar()}
+function quitar(id){pend=pend.filter(p=>p.id!==id);pend.push({op:"del",id});savePend();vaciar()}
+async function vaciar(){
+  if(!sb||!usuario||vaciando||!pend.length)return;
+  vaciando=true;
+  try{
+    while(pend.length){
+      const p=pend[0];let r;
+      if(p.op==="set")r=await sb.from("gastos").upsert({user_id:usuario.id,id:p.g.id,fecha:p.g.fecha,cat:p.g.cat,pago:p.g.pago,monto:p.g.monto,nota:p.g.nota||""},{onConflict:"user_id,id"});
+      else r=await sb.from("gastos").delete().eq("id",p.id);
+      if(r.error)throw r.error;
+      pend.shift();savePend();
+    }
+    marca("☁️ Guardado en tu cuenta");
+  }catch(e){marca("⏳ Sin conexión: se guardará al volver internet")}
+  vaciando=false;
+}
+async function cargar(){
+  let remotos=[],desde=0;
+  while(true){
+    const r=await sb.from("gastos").select("id,fecha,cat,pago,monto,nota").order("fecha",{ascending:false}).range(desde,desde+999);
+    if(r.error){marca("⏳ Sin conexión: mostrando lo último guardado");return}
+    remotos=remotos.concat(r.data.map(x=>({id:Number(x.id),fecha:x.fecha,cat:x.cat,pago:x.pago,monto:Number(x.monto),nota:x.nota||""})));
+    if(r.data.length<1000)break;desde+=1000;
+  }
+  if(!remotos.length&&!pend.length&&!localStorage.getItem("gastos_migrado")){
+    let viejos=[];try{viejos=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){}
+    viejos=viejos.filter(g=>g&&typeof g.monto==="number"&&g.fecha).map(g=>({id:g.id||Date.now(),fecha:g.fecha,cat:g.cat||"Otros",pago:g.pago||"Efectivo",monto:g.monto,nota:g.nota||""}));
+    try{localStorage.setItem("gastos_migrado","1")}catch(e){}
+    if(viejos.length){viejos.forEach(persistir);remotos=viejos.slice();toast("📦 Pasé "+viejos.length+" gastos de este celular a la nube")}
+  }
+  pend.forEach(p=>{if(p.op==="set"){const i=remotos.findIndex(x=>x.id===p.id);if(i>=0)remotos[i]=p.g;else remotos.push(p.g)}else remotos=remotos.filter(x=>x.id!==p.id)});
+  gastos=remotos;save();todo();marca(pend.length?"⏳ Guardando…":"☁️ Guardado en tu cuenta");vaciar();
+}
+function entrar(){
+  $("auth").hidden=true;$("cuenta").textContent="Sesión iniciada como "+(usuario.email||"tu cuenta");
+  todo();cargar();
+}
+const trad=m=>{m=String(m||"");
+  if(/Invalid login/i.test(m))return"Correo o contraseña incorrectos.";
+  if(/not confirmed/i.test(m))return"Falta confirmar tu correo. Abre el mensaje que te enviamos.";
+  if(/already registered/i.test(m))return"Ese correo ya tiene cuenta. Toca Entrar.";
+  if(/at least 6|Password should/i.test(m))return"La contraseña debe tener mínimo 6 caracteres.";
+  if(/valid email|invalid format/i.test(m))return"Escribe un correo válido.";
+  if(/rate limit|too many/i.test(m))return"Demasiados intentos. Espera unos minutos.";
+  if(/fetch|network/i.test(m))return"Sin internet. Intenta de nuevo.";
+  return m||"Algo salió mal. Intenta de nuevo."};
+async function iniciarNube(){
+  if(!window.supabase){marca("📱 Solo en este dispositivo");return}
+  sb=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
+  sb.auth.onAuthStateChange((ev,ses)=>{
+    if(ses&&ses.user){if(!usuario||usuario.id!==ses.user.id){usuario=ses.user;entrar()}else usuario=ses.user}
+    else if(ev==="SIGNED_OUT"){usuario=null;$("auth").hidden=false}
+  });
+  try{const{data}=await sb.auth.getSession();
+    if(data.session){usuario=data.session.user;entrar()}else $("auth").hidden=false}
+  catch(e){$("auth").hidden=false}
+}
+async function acceso(nuevo){
+  const mail=$("aMail").value.trim(),pass=$("aPass").value;
+  if(!mail||!pass){$("aMsg").textContent="Escribe tu correo y tu contraseña.";return}
+  $("aMsg").textContent="Un momento…";$("btnEntrar").disabled=$("btnCrear").disabled=true;
+  try{
+    const r=nuevo?await sb.auth.signUp({email:mail,password:pass}):await sb.auth.signInWithPassword({email:mail,password:pass});
+    if(r.error)$("aMsg").textContent=trad(r.error.message);
+    else if(nuevo&&!r.data.session)$("aMsg").textContent="Te enviamos un correo. Ábrelo para confirmar y luego toca Entrar.";
+    else $("aMsg").textContent="";
+  }catch(e){$("aMsg").textContent=trad(e.message)}
+  $("btnEntrar").disabled=$("btnCrear").disabled=false;
+}
+$("btnEntrar").addEventListener("click",()=>acceso(false));
+$("btnCrear").addEventListener("click",()=>acceso(true));
+$("salir").addEventListener("click",async()=>{
+  if(pend.length&&!confirm("Hay gastos sin subir a la nube. Si sales ahora se pueden perder. ¿Salir de todos modos?"))return;
+  try{await sb.auth.signOut()}catch(e){}
+  try{localStorage.removeItem("gastos_cache_v2");localStorage.removeItem("gastos_pend_v2")}catch(e){}
+  pend=[];gastos=[];usuario=null;todo();$("auth").hidden=false;
+});
+addEventListener("online",vaciar);
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt=n=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n);
@@ -293,8 +408,9 @@ $("guardar").addEventListener("click",()=>{
   if(!$("fecha").value){$("msg").textContent="Elige una fecha.";return}
   const g={monto,cat,pago,fecha:$("fecha").value,nota:$("nota").value.trim()};
   const editando=!!editId;
-  if(editando){const i=gastos.findIndex(x=>x.id===editId);gastos[i]={...g,id:editId}}
-  else gastos.push({...g,id:Date.now()});
+  const fin=editando?{...g,id:editId}:{...g,id:Date.now()};
+  if(editando){const i=gastos.findIndex(x=>x.id===editId);gastos[i]=fin}else gastos.push(fin);
+  persistir(fin);
   save();limpiar();todo();
   toast(editando?"✏️ Cambios guardados":"✅ Gasto guardado: "+fmt(monto)+" en "+g.cat+" ("+g.pago.toLowerCase()+")");
 });
@@ -302,7 +418,7 @@ $("cancelar").addEventListener("click",limpiar);
 $("lista").addEventListener("click",e=>{
   const d=e.target.closest("[data-d]"),ed=e.target.closest("[data-e]");
   if(d){const id=+d.dataset.d;
-    if(d.dataset.sure==="1"){gastos=gastos.filter(x=>x.id!==id);save();todo();toast("🗑️ Gasto borrado")}
+    if(d.dataset.sure==="1"){gastos=gastos.filter(x=>x.id!==id);quitar(id);save();todo();toast("🗑️ Gasto borrado")}
     else{d.dataset.sure="1";d.textContent="¿Seguro?";setTimeout(()=>{if(d.isConnected){d.dataset.sure="";d.textContent="🗑️"}},3000)}}
   if(ed){const g=gastos.find(x=>x.id===+ed.dataset.e);if(!g)return;editId=g.id;cat=g.cat;pago=g.pago||"Efectivo";pintaCats();pintaPago();
     $("monto").value=new Intl.NumberFormat("es-CO").format(g.monto);$("fecha").value=g.fecha;$("nota").value=g.nota||"";
@@ -477,7 +593,33 @@ $("excel").addEventListener("click",async()=>{
   finally{btn.disabled=false;btn.textContent="Descargar Excel con gráficas"}
 });
 
-pintaCats();pintaPago();limpiar();todo();
+$("importar").addEventListener("click",()=>$("archivo").click());
+$("archivo").addEventListener("change",async e=>{
+  const f=e.target.files[0];e.target.value="";if(!f)return;
+  if(!window.ExcelJS){toast("⏳ Cargando el lector de Excel, intenta de nuevo");return}
+  try{
+    const wb=new ExcelJS.Workbook();await wb.xlsx.load(await f.arrayBuffer());
+    const ws=wb.getWorksheet("Gastos");if(!ws){toast("No encontré la hoja 'Gastos' en ese Excel");return}
+    const llave=g=>[g.fecha,g.cat,g.pago,g.monto,g.nota].join("|");
+    const ya=new Set(gastos.map(llave));let nuevos=0,omit=0,t=Date.now();
+    ws.eachRow((row,n)=>{
+      if(n===1)return;
+      let fv=row.getCell(1).value,fecha="";
+      if(fv instanceof Date)fecha=fv.getUTCFullYear()+"-"+pad(fv.getUTCMonth()+1)+"-"+pad(fv.getUTCDate());
+      else if(typeof fv==="string"){const m=fv.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);if(m)fecha=m[3]+"-"+pad(+m[2])+"-"+pad(+m[1]);else if(/^\d{4}-\d{2}-\d{2}$/.test(fv))fecha=fv}
+      let mv=row.getCell(5).value;if(mv&&typeof mv==="object"&&"result" in mv)mv=mv.result;
+      const monto=Math.round(Number(mv));
+      if(!fecha||!monto){omit++;return}
+      const c=String(row.getCell(3).value||"").trim(),p=String(row.getCell(4).value||"").trim();
+      const g={monto,cat:CATS.some(x=>x.n===c)?c:"Otros",pago:PAGO[p]?p:"Efectivo",fecha,nota:String(row.getCell(6).value||"").trim()};
+      if(ya.has(llave(g))){omit++;return}
+      ya.add(llave(g));g.id=t++;gastos.push(g);persistir(g);nuevos++;
+    });
+    save();todo();toast(nuevos?"📥 Importé "+nuevos+" gastos"+(omit?" ("+omit+" repetidos u omitidos)":""):"No había gastos nuevos para importar");
+  }catch(err){toast("No pude leer ese archivo. Usa el Excel que descargaste de esta app.")}
+});
+
+pintaCats();pintaPago();limpiar();todo();iniciarNube();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 </script>
 </body>

@@ -304,13 +304,6 @@ async function acceso(nuevo){
   }catch(e){$("aMsg").textContent=trad(e.message)}
   $("btnEntrar").disabled=$("btnCrear").disabled=false;
 }
-$("btnEntrar").addEventListener("click",()=>acceso(false));
-$("btnCrear").addEventListener("click",()=>acceso(true));
-$("salir").addEventListener("click",async()=>{
-  if(pend.length&&!confirm("Hay gastos sin subir a la nube. Si sales ahora se pueden perder. ¿Salir de todos modos?"))return;
-  try{if(sesion)await api("/auth/v1/logout",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+sesion.access_token}})}catch(e){}
-  cerrarLocal();
-});
 addEventListener("online",vaciar);
 addEventListener("error",e=>{const x=document.getElementById("err");if(x){x.textContent="⚠️ Error en la app: "+(e.message||"desconocido")+" · toca para recargar";x.hidden=false}});
 const $=id=>document.getElementById(id);
@@ -640,6 +633,13 @@ $("archivo").addEventListener("change",async e=>{
   }catch(err){toast("No pude leer ese archivo. Usa el Excel que descargaste de esta app.")}
 });
 
+$("btnEntrar").addEventListener("click",()=>acceso(false));
+$("btnCrear").addEventListener("click",()=>acceso(true));
+$("salir").addEventListener("click",async()=>{
+  if(pend.length&&!confirm("Hay gastos sin subir a la nube. Si sales ahora se pueden perder. ¿Salir de todos modos?"))return;
+  try{if(sesion)await api("/auth/v1/logout",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+sesion.access_token}})}catch(e){}
+  cerrarLocal();
+});
 pintaCats();pintaPago();limpiar();todo();iniciarNube();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 </script>

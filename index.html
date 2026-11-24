@@ -253,7 +253,7 @@ async function vaciar(){
       pend.shift();savePend();
     }
     marca("☁️ Guardado en tu cuenta");
-  }catch(e){marca("⏳ Sin conexión: se guardará al volver internet")}
+  }catch(e){marca(e.status?"⚠️ Error "+e.status+" al guardar: "+e.message.slice(0,60):"⏳ Sin conexión: se guardará al volver internet")}
   vaciando=false;
 }
 async function cargar(){
@@ -261,12 +261,12 @@ async function cargar(){
   try{
     while(true){
       const h=await cab();
-      const d=await api("/rest/v1/gastos?select=id,fecha,cat,pago,monto,nota&order=fecha.desc",{headers:{...h,"Range-Unit":"items",Range:desde+"-"+(desde+999)}});
+      const d=await api("/rest/v1/gastos?select=id,fecha,cat,pago,monto,nota&order=fecha.desc&limit=1000&offset="+desde,{headers:h});
       const lista=Array.isArray(d)?d:[];
       remotos=remotos.concat(lista.map(x=>({id:Number(x.id),fecha:x.fecha,cat:x.cat,pago:x.pago,monto:Number(x.monto),nota:x.nota||""})));
       if(lista.length<1000)break;desde+=1000;
     }
-  }catch(e){marca("⏳ Sin conexión: mostrando lo último guardado");return}
+  }catch(e){marca(e.status?"⚠️ Error "+e.status+" al cargar: "+e.message.slice(0,60):"⏳ Sin conexión: mostrando lo último guardado");return}
   if(!remotos.length&&!pend.length&&!localStorage.getItem("gastos_migrado")){
     let viejos=[];try{viejos=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){}
     viejos=viejos.filter(g=>g&&typeof g.monto==="number"&&g.fecha).map(g=>({id:g.id||Date.now(),fecha:g.fecha,cat:g.cat||"Otros",pago:g.pago||"Efectivo",monto:g.monto,nota:g.nota||""}));
